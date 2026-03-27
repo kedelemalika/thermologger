@@ -12,9 +12,9 @@ constexpr char kPrefsMqttPort[] = "mqtt_port";
 constexpr char kPrefsDeviceId[] = "device_id";
 constexpr char kPrefsDeviceMode[] = "dev_mode";
 
-char g_mqttHost[ConfigService::MQTT_HOST_MAX_LEN] = "";
+char g_mqttHost[ConfigService::MQTT_HOST_MAX_LEN] = {};
 char g_deviceId[ConfigService::DEVICE_ID_MAX_LEN] = "";
-uint16_t g_mqttPort = 0;
+uint16_t g_mqttPort = ConfigService::MQTT_PORT_TCP;
 ConfigService::DeviceMode g_deviceMode = ConfigService::DeviceMode::PROVISIONING;
 
 void copyStringValue(char* destination, size_t destinationSize, const char* source) {
@@ -36,12 +36,14 @@ void copyStringValue(char* destination, size_t destinationSize, const char* sour
 bool ConfigService::loadRuntimeConfig() {
   Preferences prefs;
   if (!prefs.begin(kPrefsNamespace, true)) {
+    copyStringValue(g_mqttHost, sizeof(g_mqttHost), ConfigService::MQTT_DEFAULT_HOST);
+    g_mqttPort = ConfigService::MQTT_PORT_TCP;
     return false;
   }
 
-  const String mqttHost = prefs.getString(kPrefsMqttHost, "");
+  const String mqttHost = prefs.getString(kPrefsMqttHost, ConfigService::MQTT_DEFAULT_HOST);
   const String deviceId = prefs.getString(kPrefsDeviceId, "");
-  g_mqttPort = prefs.getUShort(kPrefsMqttPort, 0);
+  g_mqttPort = prefs.getUShort(kPrefsMqttPort, ConfigService::MQTT_PORT_TCP);
   g_deviceMode = static_cast<ConfigService::DeviceMode>(
       prefs.getUChar(kPrefsDeviceMode, static_cast<uint8_t>(ConfigService::DeviceMode::PROVISIONING)));
 
@@ -72,6 +74,14 @@ const char* ConfigService::getMqttHost() {
 
 uint16_t ConfigService::getMqttPort() {
   return g_mqttPort;
+}
+
+const char* ConfigService::getMqttUsername() {
+  return MQTT_USERNAME;
+}
+
+const char* ConfigService::getMqttPassword() {
+  return MQTT_PASSWORD;
 }
 
 const char* ConfigService::getDeviceId() {

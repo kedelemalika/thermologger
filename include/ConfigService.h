@@ -2,6 +2,10 @@
 
 #include <Arduino.h>
 
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
+
 // Pusat konfigurasi supaya pin, interval, dan topic tidak tersebar.
 class ConfigService {
  public:
@@ -39,8 +43,23 @@ class ConfigService {
   static constexpr const char* WIFI_AP_NAME = "esp32-room-setup";
   static constexpr const char* WIFI_AP_PASSWORD = "setup1234";
 
+  static constexpr const char* MQTT_DEFAULT_HOST = "mqtt.ljkwarehouse.com";
+  static constexpr uint16_t MQTT_PORT_TCP = 1883;
+  static constexpr uint16_t MQTT_PORT_TLS = 8883;
+  static constexpr bool MQTT_USE_TLS = false;
+
+#ifdef APP_MQTT_USERNAME
+  static constexpr const char* MQTT_USERNAME = APP_MQTT_USERNAME;
+#else
   static constexpr const char* MQTT_USERNAME = "";
+#endif
+
+#ifdef APP_MQTT_PASSWORD
+  static constexpr const char* MQTT_PASSWORD = APP_MQTT_PASSWORD;
+#else
   static constexpr const char* MQTT_PASSWORD = "";
+#endif
+
   static constexpr const char* MQTT_TOPIC_TELEMETRY =
       "company/branch-01/room-01/telemetry";
   static constexpr const char* MQTT_TOPIC_STATUS = "company/branch-01/room-01/status";
@@ -48,6 +67,7 @@ class ConfigService {
   static constexpr const char* ROOM_ID = "room-01";
   static constexpr const char* BRANCH_ID = "branch-01";
   static constexpr const char* COMPANY_ID = "company";
+  static constexpr const char* MQTT_TOPIC_ROOT = "site";
   static constexpr const char* TZ_INFO = "WIB-7";
 
   static bool loadRuntimeConfig();
@@ -55,6 +75,8 @@ class ConfigService {
 
   static const char* getMqttHost();
   static uint16_t getMqttPort();
+  static const char* getMqttUsername();
+  static const char* getMqttPassword();
   static const char* getDeviceId();
   static DeviceMode getDeviceMode();
 

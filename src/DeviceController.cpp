@@ -165,15 +165,18 @@ void DeviceController::handleSensorAndTime_(uint32_t nowMs) {
 }
 
 void DeviceController::handleTelemetryPublish_(uint32_t nowMs) {
-  if (offlineLoggerService_.hasBacklog()) {
-    // Saat backlog masih ada, sample baru diarahkan ke logger agar urutan data tetap konsisten
-    // dan tidak terkirim dobel ketika koneksi MQTT baru pulih.
+  const bool hasBacklog = offlineLoggerService_.hasBacklog();
+  if (hasBacklog) {
+    // Saat backlog masih ada, sample baru diarahkan ke logger agar urutan data tetap kronologis
+    // dan recovery tidak mengirim data lama setelah data baru.
     if (needMqtt_ && telemetry_.timestampIso.length() > 0 &&
         (nowMs - lastOfflineQueueMs_) >= ConfigService::MQTT_PUBLISH_INTERVAL_MS &&
         telemetry_.timestampIso != lastOfflineQueuedTimestamp_) {
       if (offlineLoggerService_.append(telemetry_)) {
         lastOfflineQueueMs_ = nowMs;
         lastOfflineQueuedTimestamp_ = telemetry_.timestampIso;
+        Serial.print("[MQTT] Publish deferred, sample queued ts=");
+        Serial.println(telemetry_.timestampIso);
         Serial.print("[LOGGER] queued offline ts=");
         Serial.print(telemetry_.timestampIso);
         Serial.print(" pending=");
@@ -184,10 +187,14 @@ void DeviceController::handleTelemetryPublish_(uint32_t nowMs) {
     // Replay backlog dilakukan bertahap; service logger membatasi maksimum 5 record per siklus.
     const uint8_t flushed = offlineLoggerService_.flushPending(mqttService_, nowMs);
     if (flushed > 0) {
+      Serial.println("[LOGGER] backlog flush running");
       Serial.print("[LOGGER] flushed=");
       Serial.print(flushed);
       Serial.print(" pending=");
       Serial.println(offlineLoggerService_.getPendingCount());
+      if (flushed == 5) {
+        Serial.println("[LOGGER] flush batch cap reached");
+      }
     }
     return;
   }
@@ -205,6 +212,8 @@ void DeviceController::handleTelemetryPublish_(uint32_t nowMs) {
     if (offlineLoggerService_.append(telemetry_)) {
       lastOfflineQueueMs_ = nowMs;
       lastOfflineQueuedTimestamp_ = telemetry_.timestampIso;
+      Serial.print("[MQTT] Publish failed, sample queued ts=");
+      Serial.println(telemetry_.timestampIso);
       Serial.print("[LOGGER] queued offline ts=");
       Serial.print(telemetry_.timestampIso);
       Serial.print(" pending=");
@@ -218,6 +227,19 @@ void DeviceController::handleTelemetryPublish_(uint32_t nowMs) {
   if (publishedLive) {
     lastOfflineQueueMs_ = nowMs;
     lastOfflineQueuedTimestamp_ = "";
+  }
+
+  // Replay backlog dilakukan bertahap; service logger membatasi maksimum 5 record per siklus.
+  const uint8_t flushed = offlineLoggerService_.flushPending(mqttService_, nowMs);
+  if (flushed > 0) {
+    Serial.println("[LOGGER] backlog flush running");
+    Serial.print("[LOGGER] flushed=");
+    Serial.print(flushed);
+    Serial.print(" pending=");
+    Serial.println(offlineLoggerService_.getPendingCount());
+    if (flushed == 5) {
+      Serial.println("[LOGGER] flush batch cap reached");
+    }
   }
 }
 
@@ -242,7 +264,8 @@ void DeviceController::refreshState_(uint32_t nowMs) {
   if (wifiService_.isConnected()) {
     // WiFi ada tetapi jalur cloud sedang rusak: tandai degraded, bukan offline penuh.
     if (mqttService_.isConfigured() &&
-        (!mqttService_.isConnected() || mqttService_.hasTransportFailure())) {
+        (!mqttService_.isConnected() || mqttService_.hasTransportFailure() ||
+         offlineLoggerService_.hasBacklog())) {
       setState_(State::DEGRADED_MODE);
       return;
     }
@@ -271,9 +294,26 @@ void DeviceController::setState_(State state) {
     return;
   }
 
+  const State previousState = state_;
   state_ = state;
   Serial.print("[STATE] Device -> ");
   Serial.println(stateName_(state_));
+
+  switch (state_) {
+    case State::NORMAL_OPERATION:
+      if (previousState == State::DEGRADED_MODE || previousState == State::OFFLINE_MODE) {
+        Serial.println("[STATE] Recovery complete, device back to normal");
+      }
+      break;
+    case State::DEGRADED_MODE:
+      Serial.println("[STATE] Cloud path degraded");
+      break;
+    case State::OFFLINE_MODE:
+      Serial.println("[STATE] Device offline");
+      break;
+    default:
+      break;
+  }
 }
 
 const char* DeviceController::stateName_(State state) {

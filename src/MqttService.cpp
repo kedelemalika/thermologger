@@ -31,6 +31,8 @@ void MqttService::ensureConnection(uint32_t nowMs) {
 
   const char* mqttHost = ConfigService::getMqttHost();
   const uint16_t mqttPort = ConfigService::getMqttPort();
+  const char* mqttUsername = ConfigService::getMqttUsername();
+  const char* mqttPassword = ConfigService::getMqttPassword();
   if (mqttHost == nullptr || mqttHost[0] == '\0' || mqttPort == 0) {
     return;
   }
@@ -57,16 +59,20 @@ void MqttService::ensureConnection(uint32_t nowMs) {
   Serial.print(":");
   Serial.println(mqttPort);
 
-  const bool connected = mqttClient_.connect(deviceId, ConfigService::MQTT_USERNAME,
-                                             ConfigService::MQTT_PASSWORD, statusTopic.c_str(), 0,
-                                             true, "offline");
+  const bool connected = mqttClient_.connect(deviceId, mqttUsername, mqttPassword,
+                                             statusTopic.c_str(), 0, true, "offline");
 
   if (connected) {
+    const uint32_t previousBackoffMs = reconnectBackoffMs_;
     subscribeTopics_();
     mqttClient_.publish(statusTopic.c_str(), "online", true);
     reconnectBackoffMs_ = ConfigService::MQTT_RECONNECT_INTERVAL_MS;
     transportFailure_ = false;
     Serial.println("[MQTT] Connected");
+    if (previousBackoffMs > ConfigService::MQTT_RECONNECT_INTERVAL_MS) {
+      Serial.print("[MQTT] Recovered after backoff ms=");
+      Serial.println(previousBackoffMs);
+    }
   } else {
     transportFailure_ = true;
     reconnectBackoffMs_ =
@@ -103,8 +109,9 @@ bool MqttService::publishPayload(const String& payload, uint32_t nowMs) {
 
   const String telemetryTopic = buildTelemetryTopic_();
   const bool published = mqttClient_.publish(telemetryTopic.c_str(), payload.c_str(), true);
+  const bool stillConnected = mqttClient_.connected();
 
-  if (published) {
+  if (published && stillConnected) {
     lastPublishMs_ = nowMs;
     transportFailure_ = false;
   } else {
@@ -113,7 +120,7 @@ bool MqttService::publishPayload(const String& payload, uint32_t nowMs) {
     Serial.println(mqttClient_.state());
   }
 
-  return published;
+  return published && stillConnected;
 }
 
 bool MqttService::publishBacklogPayload(const String& payload) {
@@ -123,14 +130,15 @@ bool MqttService::publishBacklogPayload(const String& payload) {
 
   const String telemetryTopic = buildTelemetryTopic_();
   const bool published = mqttClient_.publish(telemetryTopic.c_str(), payload.c_str(), true);
-  if (published) {
+  const bool stillConnected = mqttClient_.connected();
+  if (published && stillConnected) {
     transportFailure_ = false;
   } else {
     transportFailure_ = true;
     Serial.print("[MQTT] Backlog publish failed rc=");
     Serial.println(mqttClient_.state());
   }
-  return published;
+  return published && stillConnected;
 }
 
 void MqttService::loop() {
@@ -144,9 +152,12 @@ void MqttService::loop() {
 bool MqttService::isConfigured() const {
   const char* mqttHost = ConfigService::getMqttHost();
   const char* deviceId = ConfigService::getDeviceId();
+  const char* mqttUsername = ConfigService::getMqttUsername();
+  const char* mqttPassword = ConfigService::getMqttPassword();
   const uint16_t mqttPort = ConfigService::getMqttPort();
   return mqttHost != nullptr && mqttHost[0] != '\0' && deviceId != nullptr &&
-         deviceId[0] != '\0' && mqttPort != 0;
+         deviceId[0] != '\0' && mqttUsername != nullptr && mqttUsername[0] != '\0' &&
+         mqttPassword != nullptr && mqttPassword[0] != '\0' && mqttPort != 0;
 }
 
 bool MqttService::isConnected() {
@@ -183,11 +194,13 @@ void MqttService::mqttCallback_(char* topic, uint8_t* payload, unsigned int leng
 
 void MqttService::subscribeTopics_() {
   const String configTopic = buildConfigTopic_();
+  const String commandTopic = buildCommandTopic_();
   mqttClient_.subscribe(configTopic.c_str());
+  mqttClient_.subscribe(commandTopic.c_str());
 }
 
 String MqttService::buildTopicBase_() const {
-  String base = String(ConfigService::COMPANY_ID);
+  String base = String(ConfigService::MQTT_TOPIC_ROOT);
   base += "/";
   base += ConfigService::BRANCH_ID;
   base += "/";
@@ -205,8 +218,16 @@ String MqttService::buildStatusTopic_() const {
   return buildTopicBase_() + "/status";
 }
 
+String MqttService::buildHeartbeatTopic_() const {
+  return buildTopicBase_() + "/heartbeat";
+}
+
 String MqttService::buildConfigTopic_() const {
   return buildTopicBase_() + "/config";
+}
+
+String MqttService::buildCommandTopic_() const {
+  return buildTopicBase_() + "/command";
 }
 
 void MqttService::handleMessage_(char* topic, uint8_t* payload, unsigned int length) {

@@ -22,8 +22,10 @@ class MqttService {
   bool shouldRequestNetwork(uint32_t nowMs);
 
  private:
+  String buildCommandTopic_() const;
   static void mqttCallback_(char* topic, uint8_t* payload, unsigned int length);
   String buildConfigTopic_() const;
+  String buildHeartbeatTopic_() const;
   String buildPayload_(const TelemetryData& telemetry) const;
   String buildStatusTopic_() const;
   String buildTelemetryTopic_() const;
